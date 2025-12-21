@@ -28,3 +28,6 @@ def list_files(directory: str = ".") -> str:
 # 3. 서버 실행 (터미널에서 이 파일을 실행하면 작동 시작)
 if __name__ == "__main__":
     mcp.run()
+@mcp.tool()
+def check_status() -> str:
+    return "Server is running perfectly!"
