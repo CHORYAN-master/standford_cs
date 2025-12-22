@@ -6,6 +6,9 @@ This module provides reusable helper functions for the MCP server.
 from datetime import datetime
 import os
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Mathematical Operations
@@ -94,3 +97,103 @@ def validate_safe_path(file_path: str, base_dir: str) -> str:
         raise ValueError(f"Access denied: Path must be within {base_dir}")
     
     return abs_path
+
+
+# Secret Detection
+def perform_secret_scan(base_dir: str, scan_all: bool = True) -> dict:
+    """
+    Scan project files for hardcoded secrets and sensitive information.
+    
+    Args:
+        base_dir: Directory to scan
+        scan_all: If True, scan all text files; if False, only Python files
+        
+    Returns:
+        Dictionary with scan results:
+        {
+            "files_scanned": int,
+            "secrets_found": [
+                {
+                    "file": str,
+                    "line": int,
+                    "type": str,
+                    "severity": str,
+                    "context": str,
+                    "matched": str
+                }
+            ],
+            "summary": {"high": int, "medium": int, "low": int}
+        }
+    """
+    results = {
+        "files_scanned": 0,
+        "secrets_found": [],
+        "summary": {"high": 0, "medium": 0, "low": 0}
+    }
+    
+    # Secret detection patterns
+    secret_patterns = [
+        {"name": "OpenAI API Key", "pattern": r'sk-[a-zA-Z0-9]{48}', "severity": "high"},
+        {"name": "Anthropic API Key", "pattern": r'AI[a-zA-Z0-9]{40,}', "severity": "high"},
+        {"name": "Generic API Key", "pattern": r'api[_-]?key\s*=\s*["\']([a-zA-Z0-9_\-]{20,})["\']', "severity": "high"},
+        {"name": "Password", "pattern": r'password\s*=\s*["\']([^"\']{3,})["\']', "severity": "high"},
+        {"name": "Secret Key", "pattern": r'secret[_-]?key\s*=\s*["\']([^"\']{10,})["\']', "severity": "high"},
+        {"name": "AWS Access Key", "pattern": r'AKIA[0-9A-Z]{16}', "severity": "high"},
+        {"name": "Private Key Header", "pattern": r'-----BEGIN\s+(RSA\s+)?PRIVATE KEY-----', "severity": "high"},
+        {"name": "JWT Token", "pattern": r'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*', "severity": "medium"},
+        {"name": "Database Connection String", "pattern": r'(mysql|postgres|mongodb):\/\/[^\s]+', "severity": "medium"},
+        {"name": "Generic Token", "pattern": r'token\s*=\s*["\']([a-zA-Z0-9_\-]{20,})["\']', "severity": "medium"}
+    ]
+    
+    try:
+        for root, dirs, files in os.walk(base_dir):
+            # Skip common non-source directories
+            dirs[:] = [d for d in dirs if d not in ['__pycache__', '.git', 'node_modules', '.venv', 'venv']]
+            
+            for file in files:
+                # Determine which files to scan
+                if scan_all:
+                    if not file.endswith(('.py', '.js', '.json', '.yaml', '.yml', '.env', '.txt', '.md', '.sh')):
+                        continue
+                else:
+                    if not file.endswith('.py'):
+                        continue
+                
+                file_path = os.path.join(root, file)
+                results["files_scanned"] += 1
+                
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        lines = content.split('\n')
+                    
+                    # Check each pattern
+                    for pattern_info in secret_patterns:
+                        matches = re.finditer(pattern_info["pattern"], content, re.IGNORECASE)
+                        
+                        for match in matches:
+                            line_num = content[:match.start()].count('\n') + 1
+                            context_line = lines[line_num - 1].strip()
+                            
+                            secret = {
+                                "file": file_path.replace(base_dir, "."),
+                                "line": line_num,
+                                "type": pattern_info["name"],
+                                "severity": pattern_info["severity"],
+                                "context": context_line[:100] + "..." if len(context_line) > 100 else context_line,
+                                "matched": match.group(0)[:50] + "..." if len(match.group(0)) > 50 else match.group(0)
+                            }
+                            
+                            results["secrets_found"].append(secret)
+                            results["summary"][pattern_info["severity"]] += 1
+                            
+                            logger.warning(f"Secret detected: {pattern_info['name']} in {file_path}:{line_num}")
+                            
+                except Exception:
+                    # Skip files that can't be read
+                    continue
+        
+        return results
+    except Exception as e:
+        logger.error(f"Secret scan failed: {e}", exc_info=True)
+        return {"error": str(e)}
