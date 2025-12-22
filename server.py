@@ -1,8 +1,9 @@
-# My First MCP Server
+# My First MCP Server - Now with Desktop-wide access!
 # 🤖 Claude can now read, write, and execute commands autonomously!
 # 🔒 Enhanced with security validations and error handling
 # 🧹 System cleanup and secret detection
 # 🚀 Git/Graphite automation with expanded capabilities
+# 🖥️ Desktop-wide file management
 
 from mcp.server.fastmcp import FastMCP
 import utils  # Import our utility functions
@@ -10,13 +11,15 @@ import os
 import subprocess
 import re
 import json
+import glob
 from pathlib import Path
 
-# Security: Define base directory for file operations
-BASE_DIR = "/Users/hyunhocho/Desktop/Stanford_CS/week2"
+# Security: Define base directory for file operations (EXPANDED TO DESKTOP!)
+BASE_DIR = "/Users/hyunhocho/Desktop"
+PROJECT_DIR = "/Users/hyunhocho/Desktop/Stanford_CS/week2"
 
 # 1. 서버 이름 설정 (AI가 식별할 이름)
-mcp = FastMCP("My Desktop Assistant - SuperPowered")
+mcp = FastMCP("My Desktop Assistant - SuperPowered Desktop Edition")
 
 # 2. 기능 만들기: AI가 사용할 도구(Tool) 정의
 
@@ -35,7 +38,7 @@ def add_two_numbers(a: int, b: int) -> int:
 # File System Tools
 @mcp.tool()
 def list_files(directory: str = ".") -> str:
-    """List all files in the given directory (within project directory only)."""
+    """List all files in the given directory (within Desktop)."""
     try:
         safe_path = utils.validate_safe_path(directory, BASE_DIR)
         files = os.listdir(safe_path)
@@ -52,7 +55,7 @@ def list_files(directory: str = ".") -> str:
 
 @mcp.tool()
 def read_file(file_path: str) -> str:
-    """Read and return the contents of a file (within project directory only)."""
+    """Read and return the contents of a file (within Desktop)."""
     try:
         safe_path = utils.validate_safe_path(file_path, BASE_DIR)
         file_size = os.path.getsize(safe_path)
@@ -77,7 +80,7 @@ def read_file(file_path: str) -> str:
 
 @mcp.tool()
 def write_file(file_path: str, content: str) -> str:
-    """Write content to a file (within project directory only). Creates the file if it doesn't exist."""
+    """Write content to a file (within Desktop). Creates the file if it doesn't exist."""
     try:
         safe_path = utils.validate_safe_path(file_path, BASE_DIR)
         MAX_CONTENT_SIZE = 5 * 1024 * 1024  # 5MB limit
@@ -99,7 +102,7 @@ def write_file(file_path: str, content: str) -> str:
 
 @mcp.tool()
 def create_directory(dir_path: str) -> str:
-    """Create a new directory within the project."""
+    """Create a new directory within Desktop."""
     try:
         safe_path = utils.validate_safe_path(dir_path, BASE_DIR)
         os.makedirs(safe_path, exist_ok=True)
@@ -112,7 +115,7 @@ def create_directory(dir_path: str) -> str:
 
 @mcp.tool()
 def delete_file(file_path: str) -> str:
-    """Delete a file (within project directory only)."""
+    """Delete a file (within Desktop)."""
     try:
         safe_path = utils.validate_safe_path(file_path, BASE_DIR)
         if os.path.exists(safe_path):
@@ -127,10 +130,14 @@ def delete_file(file_path: str) -> str:
 
 @mcp.tool()
 def move_file(src: str, dst: str) -> str:
-    """Move or rename a file within the project."""
+    """Move or rename a file within Desktop."""
     try:
         safe_src = utils.validate_safe_path(src, BASE_DIR)
         safe_dst = utils.validate_safe_path(dst, BASE_DIR)
+        
+        # Create destination directory if it doesn't exist
+        os.makedirs(os.path.dirname(safe_dst), exist_ok=True)
+        
         os.rename(safe_src, safe_dst)
         return f"Moved {src} to {dst}"
     except ValueError as e:
@@ -139,13 +146,71 @@ def move_file(src: str, dst: str) -> str:
         return f"Error: {str(e)}"
 
 
-# Git/Graphite Tools (NEW!)
+@mcp.tool()
+def organize_screenshots() -> str:
+    """
+    Find all files starting with 'screenshot' or 'Screenshot' on Desktop
+    and move them to a Screenshots folder.
+    """
+    try:
+        results = {
+            "found": [],
+            "moved": [],
+            "errors": []
+        }
+        
+        # Create Screenshots folder if it doesn't exist
+        screenshots_dir = os.path.join(BASE_DIR, "Screenshots")
+        os.makedirs(screenshots_dir, exist_ok=True)
+        
+        # Find all screenshot files (case-insensitive)
+        patterns = [
+            os.path.join(BASE_DIR, "screenshot*"),
+            os.path.join(BASE_DIR, "Screenshot*"),
+            os.path.join(BASE_DIR, "SCREENSHOT*")
+        ]
+        
+        screenshot_files = []
+        for pattern in patterns:
+            screenshot_files.extend(glob.glob(pattern))
+        
+        # Remove duplicates
+        screenshot_files = list(set(screenshot_files))
+        
+        results["found"] = [os.path.basename(f) for f in screenshot_files]
+        
+        # Move each file
+        for file_path in screenshot_files:
+            try:
+                filename = os.path.basename(file_path)
+                dest_path = os.path.join(screenshots_dir, filename)
+                
+                # If file already exists in destination, add number
+                counter = 1
+                base_name, ext = os.path.splitext(filename)
+                while os.path.exists(dest_path):
+                    filename = f"{base_name}_{counter}{ext}"
+                    dest_path = os.path.join(screenshots_dir, filename)
+                    counter += 1
+                
+                os.rename(file_path, dest_path)
+                results["moved"].append(filename)
+            except Exception as e:
+                results["errors"].append(f"{filename}: {str(e)}")
+        
+        return json.dumps(results, indent=2)
+    
+    except Exception as e:
+        return json.dumps({"error": str(e)}, indent=2)
+
+
+# Git/Graphite Tools (Use PROJECT_DIR for Git operations)
 @mcp.tool()
 def git_status() -> str:
     """Get current git status."""
     try:
         result = subprocess.run(
-            ['git', '-C', BASE_DIR, 'status'],
+            ['git', '-C', PROJECT_DIR, 'status'],
             capture_output=True,
             text=True,
             timeout=10
@@ -165,10 +230,10 @@ def git_commit(message: str, add_all: bool = True) -> str:
     """
     try:
         if add_all:
-            subprocess.run(['git', '-C', BASE_DIR, 'add', '.'], check=True)
+            subprocess.run(['git', '-C', PROJECT_DIR, 'add', '.'], check=True)
         
         result = subprocess.run(
-            ['git', '-C', BASE_DIR, 'commit', '-m', message],
+            ['git', '-C', PROJECT_DIR, 'commit', '-m', message],
             capture_output=True,
             text=True,
             timeout=10
@@ -185,7 +250,7 @@ def graphite_create_stack(message: str) -> str:
     """Create a new Graphite stack with the given message."""
     try:
         result = subprocess.run(
-            ['gt', '-C', BASE_DIR, 'create', '-m', message],
+            ['gt', '-C', PROJECT_DIR, 'create', '-m', message],
             capture_output=True,
             text=True,
             timeout=15
@@ -200,7 +265,7 @@ def graphite_log() -> str:
     """Get Graphite stack log."""
     try:
         result = subprocess.run(
-            ['gt', '-C', BASE_DIR, 'log'],
+            ['gt', '-C', PROJECT_DIR, 'log'],
             capture_output=True,
             text=True,
             timeout=10
@@ -218,11 +283,11 @@ def auto_commit_and_stack(message: str) -> str:
     """
     try:
         # Add all changes
-        subprocess.run(['git', '-C', BASE_DIR, 'add', '.'], check=True)
+        subprocess.run(['git', '-C', PROJECT_DIR, 'add', '.'], check=True)
         
         # Commit
         commit_result = subprocess.run(
-            ['git', '-C', BASE_DIR, 'commit', '-m', message],
+            ['git', '-C', PROJECT_DIR, 'commit', '-m', message],
             capture_output=True,
             text=True,
             check=True
@@ -230,7 +295,7 @@ def auto_commit_and_stack(message: str) -> str:
         
         # Create Graphite stack
         stack_result = subprocess.run(
-            ['gt', '-C', BASE_DIR, 'create', '-m', message],
+            ['gt', '-C', PROJECT_DIR, 'create', '-m', message],
             capture_output=True,
             text=True
         )
@@ -260,13 +325,13 @@ def system_cleanup(dry_run: bool = True) -> str:
             "dry_run": dry_run
         }
         
-        for root, dirs, files in os.walk(BASE_DIR):
+        for root, dirs, files in os.walk(PROJECT_DIR):
             for file in files:
                 if file.endswith('.pyc'):
                     file_path = os.path.join(root, file)
                     file_size = os.path.getsize(file_path)
                     results["pyc_files"].append({
-                        "path": file_path.replace(BASE_DIR, "."),
+                        "path": file_path.replace(PROJECT_DIR, "."),
                         "size": file_size
                     })
                     results["total_size"] += file_size
@@ -283,7 +348,7 @@ def system_cleanup(dry_run: bool = True) -> str:
                         dir_size += os.path.getsize(fp)
                 
                 results["pycache_dirs"].append({
-                    "path": pycache_path.replace(BASE_DIR, "."),
+                    "path": pycache_path.replace(PROJECT_DIR, "."),
                     "size": dir_size
                 })
                 results["total_size"] += dir_size
@@ -328,7 +393,7 @@ def scan_secrets(scan_all: bool = True) -> str:
         ]
         
         files_to_scan = []
-        for root, dirs, files in os.walk(BASE_DIR):
+        for root, dirs, files in os.walk(PROJECT_DIR):
             dirs[:] = [d for d in dirs if d not in ['__pycache__', '.git', 'node_modules']]
             
             for file in files:
@@ -355,7 +420,7 @@ def scan_secrets(scan_all: bool = True) -> str:
                         context_line = lines[line_num - 1].strip()
                         
                         secret = {
-                            "file": file_path.replace(BASE_DIR, "."),
+                            "file": file_path.replace(PROJECT_DIR, "."),
                             "line": line_num,
                             "type": pattern_info["name"],
                             "severity": pattern_info["severity"],
@@ -447,7 +512,7 @@ def run_command(command: str) -> str:
             shell=True, 
             capture_output=True, 
             text=True,
-            cwd=BASE_DIR,
+            cwd=PROJECT_DIR,
             timeout=30
         )
         output = result.stdout if result.stdout else result.stderr
@@ -461,7 +526,7 @@ def run_command(command: str) -> str:
 @mcp.tool()
 def check_status() -> str:
     """Check if the server is running."""
-    return "Server is running perfectly! 🚀 SuperPowered Mode Active!"
+    return "Server is running perfectly! 🚀 SuperPowered Desktop Edition - Full Desktop Access!"
 
 
 # 3. 서버 실행 (터미널에서 이 파일을 실행하면 작동 시작)
