@@ -1,27 +1,85 @@
 # Docker Compose for MCP AI Agent
+# Production-ready container orchestration
+
 version: '3.8'
 
 services:
-  mcp-server:
-    build: .
-    container_name: mcp-ai-agent
+  mcp-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-ai-agent:2.0
+    container_name: mcp-agent-prod
+    
+    # Port mapping
     ports:
-      - "8501:8501"
+      - "${STREAMLIT_PORT:-8501}:8501"
+    
+    # Environment variables from .env file
     environment:
-      - BASE_DIR=/data
-      - PROJECT_DIR=/app
-      - LOG_LEVEL=INFO
-      - LOG_FILE=/app/logs/mcp_server.log
-      - MAX_FILE_SIZE_MB=10
-      - MAX_CONTENT_SIZE_MB=5
-      - RATE_LIMIT_CALLS_PER_MINUTE=100
+      # Paths
+      - BASE_DIR=${BASE_DIR:-/data}
+      - PROJECT_DIR=${PROJECT_DIR:-/app}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=${LOG_FILE:-/app/logs/mcp_server.log}
+      
+      # Security settings
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-10}
+      - MAX_CONTENT_SIZE_MB=${MAX_CONTENT_SIZE_MB:-5}
+      - RATE_LIMIT_CALLS_PER_MINUTE=${RATE_LIMIT_CALLS_PER_MINUTE:-100}
+      
+      # Timeouts
+      - GIT_OPERATION_TIMEOUT=${GIT_OPERATION_TIMEOUT:-10}
+      - COMMAND_EXECUTION_TIMEOUT=${COMMAND_EXECUTION_TIMEOUT:-30}
+    
+    # Volumes for persistent data
     volumes:
       - ./data:/data
       - ./logs:/app/logs
+      - ./.env:/app/.env:ro  # Read-only .env file
+    
+    # Restart policy
     restart: unless-stopped
+    
+    # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "python3", "healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 40s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    
+    # Network
+    networks:
+      - mcp-network
+
+# Networks
+networks:
+  mcp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# Volumes
+volumes:
+  data:
+    driver: local
+  logs:
+    driver: local
