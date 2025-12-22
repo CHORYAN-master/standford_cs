@@ -1,0 +1,174 @@
+name: CI/CD Pipeline - Deploy MCP Agent
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: mcp-ai-agent
+  DOCKER_TAG: ${{ github.sha }}
+
+jobs:
+  # Job 1: Security & Quality Checks
+  security-checks:
+    name: Security Audit & Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+    
+    - name: Run security audit
+      run: |
+        python3 security_audit.py
+        if [ $? -ne 0 ]; then
+          echo "❌ Security audit failed!"
+          exit 1
+        fi
+    
+    - name: Check for secrets
+      run: |
+        if grep -r "sk-" --include="*.py" .; then
+          echo "❌ Found potential API keys!"
+          exit 1
+        fi
+    
+    - name: Lint with ruff (if available)
+      continue-on-error: true
+      run: |
+        pip install ruff
+        ruff check . || true
+
+  # Job 2: Build Docker Image
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: security-checks
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Build Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: false
+        tags: ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Test Docker image
+      run: |
+        docker run -d --name test-container \
+          -e BASE_DIR=/data \
+          -e PROJECT_DIR=/app \
+          ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+        
+        # Wait for startup
+        sleep 30
+        
+        # Run health check
+        docker exec test-container python3 healthcheck.py
+        
+        # Cleanup
+        docker stop test-container
+        docker rm test-container
+
+  # Job 3: Deploy to Fly.io
+  deploy-flyio:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup Fly.io CLI
+      uses: superfly/flyctl-actions/setup-flyctl@master
+    
+    - name: Deploy to Fly.io
+      run: flyctl deploy --remote-only
+      env:
+        FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    
+    - name: Health check after deploy
+      run: |
+        sleep 10
+        curl -f https://your-app.fly.dev/_stcore/health || exit 1
+
+  # Job 4: Deploy to AWS ECS (Optional)
+  deploy-aws:
+    name: Deploy to AWS ECS
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && false  # Disabled by default
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+    
+    - name: Build and push to ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: mcp-ai-agent
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$DOCKER_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$DOCKER_TAG
+    
+    - name: Deploy to ECS
+      run: |
+        aws ecs update-service \
+          --cluster mcp-cluster \
+          --service mcp-service \
+          --force-new-deployment
+
+  # Job 5: Notify
+  notify:
+    name: Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [deploy-flyio]
+    if: always()
+    
+    steps:
+    - name: Notify success
+      if: needs.deploy-flyio.result == 'success'
+      run: |
+        echo "✅ Deployment successful!"
+        echo "Version: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref }}"
+    
+    - name: Notify failure
+      if: needs.deploy-flyio.result == 'failure'
+      run: |
+        echo "❌ Deployment failed!"
+        echo "Check logs for details"
+        exit 1
