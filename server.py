@@ -1,4 +1,5 @@
 # My First MCP Server
+# 🤖 Claude can now read, write, and execute commands autonomously!
 
 from mcp.server.fastmcp import FastMCP
 from datetime import datetime
