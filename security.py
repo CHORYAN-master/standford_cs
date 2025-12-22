@@ -1,309 +1,311 @@
 """
 Security utilities for input validation and sanitization.
-Implements strict validation for commands, commit messages, and filenames.
+Implements strict validation rules to prevent injection attacks.
 """
 
 import re
 import shlex
 import logging
 from typing import Tuple, List, Optional
-from pathlib import Path
-from config import ValidationLimits, SecuritySettings
 
 logger = logging.getLogger(__name__)
 
 
-class ValidationError(Exception):
-    """Raised when input validation fails."""
-    pass
+# ==================== Command Validation ====================
+
+# Safe read-only commands whitelist
+SAFE_READ_ONLY_COMMANDS = {
+    'ls', 'pwd', 'cat', 'grep', 'find', 'wc', 'head', 'tail',
+    'echo', 'git status', 'git log', 'git diff'
+}
+
+# Git commands whitelist
+SAFE_GIT_COMMANDS = {
+    'git', 'gt'
+}
 
 
 def validate_commit_message(message: str) -> Tuple[bool, str]:
     """
-    Validate git commit message with strict security checks.
+    Validate git commit message for security.
     
-    Security measures:
-    - Length limits
-    - Character whitelist (alphanumeric + safe punctuation)
-    - Command injection pattern blocking
+    Prevents command injection in commit messages.
     
     Args:
         message: Commit message to validate
-    
+        
     Returns:
         (is_valid, error_message)
-        - is_valid: True if message is safe
-        - error_message: Description of validation failure (empty if valid)
     
     Examples:
-        >>> validate_commit_message("feat: add new feature")
+        >>> validate_commit_message("fix: bug")
         (True, "")
         
-        >>> validate_commit_message("test; rm -rf /")
+        >>> validate_commit_message("fix; rm -rf /")
         (False, "Commit message contains forbidden characters")
     """
-    # Type check
     if not message or not isinstance(message, str):
         return False, "Commit message must be a non-empty string"
     
-    # Length validation
-    if len(message) > ValidationLimits.MAX_COMMIT_MSG_LENGTH:
-        return False, f"Commit message too long (max {ValidationLimits.MAX_COMMIT_MSG_LENGTH} characters)"
+    # Length check
+    if len(message) > 500:
+        return False, "Commit message too long (max 500 characters)"
     
-    # Character whitelist - only allow safe characters
-    # Alphanumeric, spaces, and common punctuation: -_.,!?:()[]
+    # Character whitelist - only alphanumeric, spaces, and safe punctuation
+    # Allowed: letters, numbers, spaces, -_.,:!?()[]
     if not re.match(r'^[a-zA-Z0-9\s\-_.,!?:()\[\]]+$', message):
         return False, "Commit message contains invalid characters"
     
     # Block command injection patterns
-    for pattern in SecuritySettings.BLOCKED_COMMAND_PATTERNS:
+    dangerous_patterns = [
+        ';', '&&', '||', '|', '`', '$', '>', '<', 
+        '\n', '\r', '$(', '#{', '\\', '"', "'"
+    ]
+    
+    for pattern in dangerous_patterns:
         if pattern in message:
-            return False, f"Commit message contains forbidden pattern: '{pattern}'"
+            logger.warning(f"Commit message rejected - contains '{pattern}': {message[:50]}")
+            return False, f"Commit message contains forbidden character: {pattern}"
     
     return True, ""
 
 
 def validate_command_strict(command: str) -> Tuple[bool, str, List[str]]:
     """
-    Strictly validate shell command for security.
+    Strictly validate command for security.
     
-    Security measures:
-    - Command whitelist (only safe read-only commands)
-    - Shell operator blocking (;, &&, ||, |, etc.)
-    - Path traversal prevention
-    - Proper shell parsing (shlex)
+    Only allows safe, read-only commands with no dangerous operators.
     
     Args:
-        command: Shell command string to validate
-    
+        command: Shell command to validate
+        
     Returns:
         (is_valid, error_message, parsed_args)
-        - is_valid: True if command is safe
-        - error_message: Description of validation failure
-        - parsed_args: Safely parsed command arguments
-    
+        
     Examples:
         >>> validate_command_strict("ls -la")
         (True, "", ["ls", "-la"])
         
-        >>> validate_command_strict("ls && rm file")
-        (False, "Forbidden character: &&", [])
+        >>> validate_command_strict("ls; rm file")
+        (False, "Forbidden character: ;", [])
     """
-    # Type and length check
     if not command or not isinstance(command, str):
-        return False, "Command must be a non-empty string", []
+        return False, "Command must be non-empty string", []
     
-    if len(command) > ValidationLimits.MAX_COMMAND_LENGTH:
-        return False, f"Command too long (max {ValidationLimits.MAX_COMMAND_LENGTH} characters)", []
+    # Length check
+    if len(command) > 1000:
+        return False, "Command too long (max 1000 characters)", []
     
-    # Block dangerous operators BEFORE parsing
-    for char in SecuritySettings.BLOCKED_COMMAND_PATTERNS:
-        if char in command:
-            logger.warning(f"Blocked command with forbidden pattern: {char}")
-            return False, f"Forbidden character: {char}", []
-    
-    # Parse command safely using shlex
+    # Parse command safely
     try:
-        parsed_args = shlex.split(command)
+        args = shlex.split(command)
     except ValueError as e:
         logger.warning(f"Command parsing failed: {e}")
         return False, f"Invalid command syntax: {e}", []
     
-    if not parsed_args:
-        return False, "Empty command after parsing", []
+    if not args:
+        return False, "Empty command", []
     
-    # Extract base command
-    base_cmd = parsed_args[0]
+    base_cmd = args[0]
     
-    # Whitelist check - only allow safe read-only commands
-    if base_cmd not in SecuritySettings.SAFE_READ_ONLY_COMMANDS:
-        logger.warning(f"Blocked non-whitelisted command: {base_cmd}")
-        return False, f"Command '{base_cmd}' is not allowed", []
+    # Whitelist check
+    if base_cmd not in SAFE_READ_ONLY_COMMANDS:
+        logger.warning(f"Command not in whitelist: {base_cmd}")
+        return False, f"Command '{base_cmd}' not allowed", []
     
-    # Check arguments for path traversal
-    for arg in parsed_args[1:]:
+    # Block dangerous operators and characters
+    dangerous_chars = [
+        ';', '&&', '||', '|', '`', '$', '>', '<', 
+        '$(', '#{', '\n', '\r', '\\\\', '&'
+    ]
+    
+    for char in dangerous_chars:
+        if char in command:
+            logger.warning(f"Command rejected - contains '{char}': {command[:50]}")
+            return False, f"Forbidden character: {char}", []
+    
+    # Block path traversal in arguments
+    for arg in args[1:]:
         if '..' in arg:
-            logger.warning(f"Blocked path traversal attempt: {arg}")
-            return False, "Path traversal not allowed in arguments", []
-        
-        # Block absolute paths in arguments (except for git -C)
-        if arg.startswith('/') and base_cmd not in ['git']:
-            logger.warning(f"Blocked absolute path in argument: {arg}")
-            return False, "Absolute paths not allowed in arguments", []
+            logger.warning(f"Path traversal attempt: {arg}")
+            return False, "Path traversal not allowed", []
     
-    logger.info(f"Command validated: {base_cmd}")
-    return True, "", parsed_args
+    return True, "", args
+
+
+def validate_git_command(base_cmd: str) -> bool:
+    """
+    Validate if command is a safe git command.
+    
+    Args:
+        base_cmd: Base command (e.g., 'git', 'gt')
+        
+    Returns:
+        True if command is safe, False otherwise
+    """
+    return base_cmd in SAFE_GIT_COMMANDS
+
+
+# ==================== Filename Validation ====================
+
+ALLOWED_EXTENSIONS = {
+    '.txt', '.md', '.json', '.yaml', '.yml',
+    '.py', '.js', '.html', '.css', '.xml',
+    '.csv', '.log', '.cfg', '.ini', '.toml'
+}
+
+FORBIDDEN_FILENAMES = {
+    'con', 'prn', 'aux', 'nul',  # Windows reserved
+    'com1', 'com2', 'com3', 'com4',
+    'lpt1', 'lpt2', 'lpt3', 'lpt4'
+}
 
 
 def validate_filename(file_path: str) -> Tuple[bool, str]:
     """
     Validate filename for security and compatibility.
     
-    Security measures:
-    - Extension whitelist
-    - Reserved name blocking (Windows)
-    - Dangerous character blocking
-    - Hidden file prevention
+    Prevents:
+    - Executable files (.exe, .sh, .bat)
+    - Hidden files
+    - Reserved names
+    - Invalid characters
     
     Args:
-        file_path: File path to validate (can be relative)
-    
-    Returns:
-        (is_valid, error_message)
-    
-    Examples:
-        >>> validate_filename("data.json")
-        (True, "")
+        file_path: File path to validate
         
-        >>> validate_filename("malware.exe")
-        (False, "File extension .exe not allowed")
-    """
-    try:
-        path = Path(file_path)
-        filename = path.name.lower()
-        
-        # Check extension whitelist
-        if path.suffix not in SecuritySettings.ALLOWED_WRITE_EXTENSIONS:
-            return False, f"File extension {path.suffix} not allowed"
-        
-        # Check for reserved filenames (Windows)
-        stem = path.stem.lower()
-        if stem in SecuritySettings.FORBIDDEN_FILENAMES:
-            return False, f"Filename '{stem}' is reserved"
-        
-        # Block dangerous characters
-        dangerous_chars = ['<', '>', ':', '"', '|', '?', '*', '\x00']
-        for char in dangerous_chars:
-            if char in filename:
-                return False, f"Filename contains invalid character: '{char}'"
-        
-        # Block hidden files (starting with .)
-        if filename.startswith('.'):
-            return False, "Hidden files not allowed"
-        
-        # Block files with multiple extensions (e.g., file.txt.exe)
-        if filename.count('.') > 1:
-            return False, "Multiple file extensions not allowed"
-        
-        return True, ""
-        
-    except Exception as e:
-        logger.error(f"Filename validation error: {e}")
-        return False, f"Invalid filename: {e}"
-
-
-def sanitize_error_message(error: Exception, context: str = "") -> str:
-    """
-    Sanitize error messages for client display.
-    
-    Removes sensitive information like:
-    - File system paths
-    - User names
-    - System information
-    
-    Args:
-        error: Exception object
-        context: Optional context (e.g., "file operation", "git command")
-    
-    Returns:
-        Sanitized generic error message
-    
-    Examples:
-        >>> sanitize_error_message(FileNotFoundError("/Users/john/file.txt"))
-        "File not found"
-    """
-    error_type = type(error).__name__
-    
-    # Map specific errors to generic messages
-    error_map = {
-        'FileNotFoundError': 'File not found',
-        'PermissionError': 'Access denied',
-        'IsADirectoryError': 'Invalid file path',
-        'NotADirectoryError': 'Invalid directory path',
-        'UnicodeDecodeError': 'File encoding error',
-        'TimeoutExpired': 'Operation timed out',
-        'ValueError': 'Invalid input',
-        'TypeError': 'Invalid input type',
-    }
-    
-    generic_message = error_map.get(error_type, 'Operation failed')
-    
-    if context:
-        return f"Error: {generic_message} during {context}"
-    
-    return f"Error: {generic_message}"
-
-
-def validate_username(username: str) -> Tuple[bool, str]:
-    """
-    Validate username with security checks.
-    
-    Args:
-        username: Username to validate
-    
     Returns:
         (is_valid, error_message)
     """
-    if not username or not isinstance(username, str):
-        return False, "Username must be a non-empty string"
+    from pathlib import Path
     
-    # Length check
-    if not (ValidationLimits.MIN_USERNAME_LENGTH <= len(username) <= ValidationLimits.MAX_USERNAME_LENGTH):
-        return False, f"Username must be between {ValidationLimits.MIN_USERNAME_LENGTH}-{ValidationLimits.MAX_USERNAME_LENGTH} characters"
+    path = Path(file_path)
+    filename = path.name.lower()
     
-    # Character whitelist (alphanumeric, Korean, spaces, basic punctuation)
-    if not re.match(r"^[a-zA-Z0-9가-힣\s\-_.,']+$", username):
-        return False, "Username contains invalid characters"
+    # Check extension
+    if path.suffix and path.suffix not in ALLOWED_EXTENSIONS:
+        return False, f"File extension '{path.suffix}' not allowed"
     
-    # Reserved words
-    RESERVED_USERNAMES = ['admin', 'root', 'system', 'administrator']
-    if username.lower() in RESERVED_USERNAMES:
-        return False, "Username is reserved"
+    # Check for reserved names
+    stem = path.stem.lower()
+    if stem in FORBIDDEN_FILENAMES:
+        return False, f"Filename '{stem}' is reserved"
+    
+    # Check for dangerous characters
+    dangerous_chars = ['<', '>', ':', '"', '|', '?', '*', '\0', '\n']
+    for char in dangerous_chars:
+        if char in filename:
+            return False, f"Filename contains invalid character: {char}"
+    
+    # Check for hidden files (starting with .)
+    if filename.startswith('.'):
+        return False, "Hidden files not allowed"
+    
+    # Check for path traversal
+    if '..' in file_path:
+        return False, "Path traversal not allowed"
     
     return True, ""
 
 
-# Example usage and testing
-if __name__ == "__main__":
-    # Test commit message validation
-    print("Testing commit message validation:")
-    test_messages = [
-        ("feat: add new feature", True),
-        ("fix: resolve bug", True),
-        ("test; rm -rf /", False),
-        ("update && malicious", False),
-        ("a" * 600, False),
-    ]
+# ==================== Rate Limiting ====================
+
+from time import time
+from collections import defaultdict
+from functools import wraps
+
+
+class RateLimiter:
+    """
+    Rate limiter for function calls.
     
-    for msg, expected in test_messages:
-        valid, error = validate_commit_message(msg)
-        status = "✅" if valid == expected else "❌"
-        print(f"{status} '{msg[:50]}...' -> Valid: {valid}, Error: {error}")
+    Prevents abuse by limiting the number of calls per time window.
+    """
     
-    print("\nTesting command validation:")
-    test_commands = [
-        ("ls -la", True),
-        ("cat file.txt", True),
-        ("ls && rm file", False),
-        ("python -c 'malicious'", False),
-        ("rm -rf /", False),
-    ]
+    def __init__(self, max_calls: int, time_window: int = 60):
+        """
+        Initialize rate limiter.
+        
+        Args:
+            max_calls: Maximum number of calls allowed
+            time_window: Time window in seconds (default: 60)
+        """
+        self.max_calls = max_calls
+        self.time_window = time_window
+        self.calls = defaultdict(list)
     
-    for cmd, expected in test_commands:
-        valid, error, args = validate_command_strict(cmd)
-        status = "✅" if valid == expected else "❌"
-        print(f"{status} '{cmd}' -> Valid: {valid}, Args: {args}, Error: {error}")
+    def is_allowed(self, key: str) -> Tuple[bool, str]:
+        """
+        Check if call is allowed.
+        
+        Args:
+            key: Identifier for rate limiting (e.g., function name)
+            
+        Returns:
+            (is_allowed, error_message)
+        """
+        now = time()
+        
+        # Remove old calls outside time window
+        self.calls[key] = [
+            call_time for call_time in self.calls[key]
+            if now - call_time < self.time_window
+        ]
+        
+        # Check rate limit
+        if len(self.calls[key]) >= self.max_calls:
+            remaining_time = int(self.time_window - (now - self.calls[key][0]))
+            return False, f"Rate limit exceeded. Try again in {remaining_time}s"
+        
+        # Record this call
+        self.calls[key].append(now)
+        
+        return True, ""
     
-    print("\nTesting filename validation:")
-    test_files = [
-        ("data.json", True),
-        ("script.py", True),
-        ("malware.exe", False),
-        (".hidden", False),
-        ("file.txt.exe", False),
-    ]
+    def __call__(self, func):
+        """Decorator to apply rate limiting."""
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = func.__name__
+            
+            allowed, error = self.is_allowed(key)
+            if not allowed:
+                logger.warning(f"Rate limit hit for {key}")
+                return f"Error: {error}"
+            
+            return func(*args, **kwargs)
+        
+        return wrapper
+
+
+# ==================== Error Message Sanitization ====================
+
+def sanitize_error_message(error: Exception, operation: str) -> str:
+    """
+    Sanitize error message for user display.
     
-    for filename, expected in test_files:
-        valid, error = validate_filename(filename)
-        status = "✅" if valid == expected else "❌"
-        print(f"{status} '{filename}' -> Valid: {valid}, Error: {error}")
+    Removes sensitive information while logging details internally.
+    
+    Args:
+        error: Exception object
+        operation: Operation being performed (for context)
+        
+    Returns:
+        Sanitized error message safe for user display
+    """
+    # Log detailed error internally
+    logger.error(f"{operation} failed: {error}", exc_info=True)
+    
+    # Return generic message to user
+    error_type = type(error).__name__
+    
+    if isinstance(error, FileNotFoundError):
+        return "Error: File not found"
+    elif isinstance(error, PermissionError):
+        return "Error: Access denied"
+    elif isinstance(error, ValueError):
+        return "Error: Invalid input"
+    elif isinstance(error, TimeoutError):
+        return "Error: Operation timed out"
+    else:
+        return f"Error: Unable to complete {operation}"

@@ -11,15 +11,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# Mathematical Operations
+# ==================== Mathematical Operations ====================
+
 def add_numbers(a: int, b: int) -> int:
     """
     Add two numbers together with overflow protection.
     
+    Args:
+        a, b: Integers to add
+        
+    Returns:
+        Sum of a and b
+        
     Raises:
-        ValueError: If numbers are too large or result would overflow.
+        ValueError: If numbers are too large or result would overflow
     """
-    # Prevent integer overflow (Python handles big ints, but set reasonable limits)
+    # Prevent integer overflow
     MAX_INT = 10**15
     MIN_INT = -10**15
     
@@ -33,7 +40,8 @@ def add_numbers(a: int, b: int) -> int:
     return result
 
 
-# Time Operations
+# ==================== Time Operations ====================
+
 def get_current_datetime() -> str:
     """Get the current date and time in YYYY-MM-DD HH:MM:SS format."""
     now = datetime.now()
@@ -46,7 +54,8 @@ def get_current_time_only() -> str:
     return now.strftime("%H:%M:%S")
 
 
-# String Processing
+# ==================== String Processing ====================
+
 def format_greeting(name: str) -> str:
     """
     Format a personalized greeting with the current time.
@@ -54,8 +63,11 @@ def format_greeting(name: str) -> str:
     Args:
         name: User's name (max 100 characters, alphanumeric and spaces only)
         
+    Returns:
+        Formatted greeting string
+        
     Raises:
-        ValueError: If name is invalid or too long.
+        ValueError: If name is invalid or too long
     """
     # Input validation
     if not name or not isinstance(name, str):
@@ -65,7 +77,7 @@ def format_greeting(name: str) -> str:
     if len(name) > 100:
         raise ValueError("Name must be 100 characters or less")
     
-    # Sanitize: only allow alphanumeric, spaces, and basic punctuation
+    # Sanitize: only allow alphanumeric, spaces, Korean, and basic punctuation
     if not re.match(r"^[a-zA-Z0-9가-힣\s\-_.,']+$", name):
         raise ValueError("Name contains invalid characters")
     
@@ -73,10 +85,13 @@ def format_greeting(name: str) -> str:
     return f"Hello, {name}! 현재 시간은 {current_time}입니다."
 
 
-# File Path Security
+# ==================== File Path Security ====================
+
 def validate_safe_path(file_path: str, base_dir: str) -> str:
     """
     Validate that a file path is safe and within the allowed directory.
+    
+    Prevents path traversal attacks (../../../etc/passwd).
     
     Args:
         file_path: The file path to validate
@@ -87,6 +102,13 @@ def validate_safe_path(file_path: str, base_dir: str) -> str:
         
     Raises:
         ValueError: If path is unsafe or outside base directory
+        
+    Example:
+        >>> validate_safe_path("test.txt", "/home/user/project")
+        '/home/user/project/test.txt'
+        
+        >>> validate_safe_path("../../etc/passwd", "/home/user/project")
+        ValueError: Access denied
     """
     # Normalize and resolve the path
     abs_base = os.path.abspath(base_dir)
@@ -94,15 +116,19 @@ def validate_safe_path(file_path: str, base_dir: str) -> str:
     
     # Check if path is within base directory (prevent path traversal)
     if not abs_path.startswith(abs_base):
+        logger.warning(f"Path traversal attempt: {file_path}")
         raise ValueError(f"Access denied: Path must be within {base_dir}")
     
     return abs_path
 
 
-# Secret Detection
+# ==================== Secret Detection ====================
+
 def perform_secret_scan(base_dir: str, scan_all: bool = True) -> dict:
     """
     Scan project files for hardcoded secrets and sensitive information.
+    
+    Detects patterns like API keys, passwords, tokens, and credentials.
     
     Args:
         base_dir: Directory to scan
@@ -118,8 +144,7 @@ def perform_secret_scan(base_dir: str, scan_all: bool = True) -> dict:
                     "line": int,
                     "type": str,
                     "severity": str,
-                    "context": str,
-                    "matched": str
+                    "context": str
                 }
             ],
             "summary": {"high": int, "medium": int, "low": int}
@@ -141,7 +166,7 @@ def perform_secret_scan(base_dir: str, scan_all: bool = True) -> dict:
         {"name": "AWS Access Key", "pattern": r'AKIA[0-9A-Z]{16}', "severity": "high"},
         {"name": "Private Key Header", "pattern": r'-----BEGIN\s+(RSA\s+)?PRIVATE KEY-----', "severity": "high"},
         {"name": "JWT Token", "pattern": r'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*', "severity": "medium"},
-        {"name": "Database Connection String", "pattern": r'(mysql|postgres|mongodb):\/\/[^\s]+', "severity": "medium"},
+        {"name": "Database Connection", "pattern": r'(mysql|postgres|mongodb):\/\/[^\s]+', "severity": "medium"},
         {"name": "Generic Token", "pattern": r'token\s*=\s*["\']([a-zA-Z0-9_\-]{20,})["\']', "severity": "medium"}
     ]
     
@@ -180,20 +205,21 @@ def perform_secret_scan(base_dir: str, scan_all: bool = True) -> dict:
                                 "line": line_num,
                                 "type": pattern_info["name"],
                                 "severity": pattern_info["severity"],
-                                "context": context_line[:100] + "..." if len(context_line) > 100 else context_line,
-                                "matched": match.group(0)[:50] + "..." if len(match.group(0)) > 50 else match.group(0)
+                                "context": context_line[:80] + "..." if len(context_line) > 80 else context_line
                             }
                             
                             results["secrets_found"].append(secret)
                             results["summary"][pattern_info["severity"]] += 1
                             
-                            logger.warning(f"Secret detected: {pattern_info['name']} in {file_path}:{line_num}")
+                            logger.info(f"Secret detected: {pattern_info['name']} in {file_path}:{line_num}")
                             
-                except Exception:
+                except Exception as e:
                     # Skip files that can't be read
+                    logger.debug(f"Could not scan {file_path}: {e}")
                     continue
         
         return results
+        
     except Exception as e:
         logger.error(f"Secret scan failed: {e}", exc_info=True)
         return {"error": str(e)}
