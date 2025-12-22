@@ -2,6 +2,7 @@
 # 🤖 Claude can now read, write, and execute commands autonomously!
 # 🔒 Enhanced with security validations and error handling
 # 🧹 System cleanup and secret detection
+# 🚀 Git/Graphite automation with expanded capabilities
 
 from mcp.server.fastmcp import FastMCP
 import utils  # Import our utility functions
@@ -15,7 +16,7 @@ from pathlib import Path
 BASE_DIR = "/Users/hyunhocho/Desktop/Stanford_CS/week2"
 
 # 1. 서버 이름 설정 (AI가 식별할 이름)
-mcp = FastMCP("My Desktop Assistant")
+mcp = FastMCP("My Desktop Assistant - SuperPowered")
 
 # 2. 기능 만들기: AI가 사용할 도구(Tool) 정의
 
@@ -96,6 +97,151 @@ def write_file(file_path: str, content: str) -> str:
         return f"Error writing file: {str(e)}"
 
 
+@mcp.tool()
+def create_directory(dir_path: str) -> str:
+    """Create a new directory within the project."""
+    try:
+        safe_path = utils.validate_safe_path(dir_path, BASE_DIR)
+        os.makedirs(safe_path, exist_ok=True)
+        return f"Created directory: {dir_path}"
+    except ValueError as e:
+        return f"Security Error: {str(e)}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@mcp.tool()
+def delete_file(file_path: str) -> str:
+    """Delete a file (within project directory only)."""
+    try:
+        safe_path = utils.validate_safe_path(file_path, BASE_DIR)
+        if os.path.exists(safe_path):
+            os.remove(safe_path)
+            return f"Deleted: {file_path}"
+        return f"File not found: {file_path}"
+    except ValueError as e:
+        return f"Security Error: {str(e)}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@mcp.tool()
+def move_file(src: str, dst: str) -> str:
+    """Move or rename a file within the project."""
+    try:
+        safe_src = utils.validate_safe_path(src, BASE_DIR)
+        safe_dst = utils.validate_safe_path(dst, BASE_DIR)
+        os.rename(safe_src, safe_dst)
+        return f"Moved {src} to {dst}"
+    except ValueError as e:
+        return f"Security Error: {str(e)}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+# Git/Graphite Tools (NEW!)
+@mcp.tool()
+def git_status() -> str:
+    """Get current git status."""
+    try:
+        result = subprocess.run(
+            ['git', '-C', BASE_DIR, 'status'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        return result.stdout if result.returncode == 0 else result.stderr
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@mcp.tool()
+def git_commit(message: str, add_all: bool = True) -> str:
+    """
+    Commit changes with a message.
+    Args:
+        message: Commit message
+        add_all: If True, adds all changes before committing
+    """
+    try:
+        if add_all:
+            subprocess.run(['git', '-C', BASE_DIR, 'add', '.'], check=True)
+        
+        result = subprocess.run(
+            ['git', '-C', BASE_DIR, 'commit', '-m', message],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        return result.stdout if result.returncode == 0 else result.stderr
+    except subprocess.CalledProcessError as e:
+        return f"Git error: {e}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@mcp.tool()
+def graphite_create_stack(message: str) -> str:
+    """Create a new Graphite stack with the given message."""
+    try:
+        result = subprocess.run(
+            ['gt', '-C', BASE_DIR, 'create', '-m', message],
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        return result.stdout if result.returncode == 0 else result.stderr
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@mcp.tool()
+def graphite_log() -> str:
+    """Get Graphite stack log."""
+    try:
+        result = subprocess.run(
+            ['gt', '-C', BASE_DIR, 'log'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        return result.stdout if result.returncode == 0 else result.stderr
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@mcp.tool()
+def auto_commit_and_stack(message: str) -> str:
+    """
+    One-step automation: add all changes, commit, and create Graphite stack.
+    This is the most efficient way to save your work!
+    """
+    try:
+        # Add all changes
+        subprocess.run(['git', '-C', BASE_DIR, 'add', '.'], check=True)
+        
+        # Commit
+        commit_result = subprocess.run(
+            ['git', '-C', BASE_DIR, 'commit', '-m', message],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Create Graphite stack
+        stack_result = subprocess.run(
+            ['gt', '-C', BASE_DIR, 'create', '-m', message],
+            capture_output=True,
+            text=True
+        )
+        
+        return f"✅ Success!\n\nCommit:\n{commit_result.stdout}\n\nStack:\n{stack_result.stdout}"
+    except subprocess.CalledProcessError as e:
+        return f"Error during workflow: {e}\nStdout: {e.stdout}\nStderr: {e.stderr}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
 # System Cleanup Tools
 @mcp.tool()
 def system_cleanup(dry_run: bool = True) -> str:
@@ -114,7 +260,6 @@ def system_cleanup(dry_run: bool = True) -> str:
             "dry_run": dry_run
         }
         
-        # Find .pyc files
         for root, dirs, files in os.walk(BASE_DIR):
             for file in files:
                 if file.endswith('.pyc'):
@@ -129,11 +274,8 @@ def system_cleanup(dry_run: bool = True) -> str:
                     if not dry_run:
                         os.remove(file_path)
             
-            # Find __pycache__ directories
             if '__pycache__' in dirs:
                 pycache_path = os.path.join(root, '__pycache__')
-                
-                # Calculate directory size
                 dir_size = 0
                 for dirpath, dirnames, filenames in os.walk(pycache_path):
                     for f in filenames:
@@ -169,84 +311,34 @@ def scan_secrets(scan_all: bool = True) -> str:
         results = {
             "files_scanned": 0,
             "secrets_found": [],
-            "summary": {
-                "high": 0,
-                "medium": 0,
-                "low": 0
-            }
+            "summary": {"high": 0, "medium": 0, "low": 0}
         }
         
-        # Secret patterns
         secret_patterns = [
-            {
-                "name": "OpenAI API Key",
-                "pattern": r'sk-[a-zA-Z0-9]{48}',
-                "severity": "high"
-            },
-            {
-                "name": "Anthropic API Key",
-                "pattern": r'AI[a-zA-Z0-9]{40,}',
-                "severity": "high"
-            },
-            {
-                "name": "Generic API Key",
-                "pattern": r'api[_-]?key\s*=\s*["\']([a-zA-Z0-9_\-]{20,})["\']',
-                "severity": "high"
-            },
-            {
-                "name": "Password",
-                "pattern": r'password\s*=\s*["\']([^"\']{3,})["\']',
-                "severity": "high"
-            },
-            {
-                "name": "Secret Key",
-                "pattern": r'secret[_-]?key\s*=\s*["\']([^"\']{10,})["\']',
-                "severity": "high"
-            },
-            {
-                "name": "AWS Access Key",
-                "pattern": r'AKIA[0-9A-Z]{16}',
-                "severity": "high"
-            },
-            {
-                "name": "Private Key Header",
-                "pattern": r'-----BEGIN\s+(RSA\s+)?PRIVATE KEY-----',
-                "severity": "high"
-            },
-            {
-                "name": "JWT Token",
-                "pattern": r'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*',
-                "severity": "medium"
-            },
-            {
-                "name": "Database Connection String",
-                "pattern": r'(mysql|postgres|mongodb):\/\/[^\s]+',
-                "severity": "medium"
-            },
-            {
-                "name": "Generic Token",
-                "pattern": r'token\s*=\s*["\']([a-zA-Z0-9_\-]{20,})["\']',
-                "severity": "medium"
-            }
+            {"name": "OpenAI API Key", "pattern": r'sk-[a-zA-Z0-9]{48}', "severity": "high"},
+            {"name": "Anthropic API Key", "pattern": r'AI[a-zA-Z0-9]{40,}', "severity": "high"},
+            {"name": "Generic API Key", "pattern": r'api[_-]?key\s*=\s*["\']([a-zA-Z0-9_\-]{20,})["\']', "severity": "high"},
+            {"name": "Password", "pattern": r'password\s*=\s*["\']([^"\']{3,})["\']', "severity": "high"},
+            {"name": "Secret Key", "pattern": r'secret[_-]?key\s*=\s*["\']([^"\']{10,})["\']', "severity": "high"},
+            {"name": "AWS Access Key", "pattern": r'AKIA[0-9A-Z]{16}', "severity": "high"},
+            {"name": "Private Key Header", "pattern": r'-----BEGIN\s+(RSA\s+)?PRIVATE KEY-----', "severity": "high"},
+            {"name": "JWT Token", "pattern": r'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*', "severity": "medium"},
+            {"name": "Database Connection String", "pattern": r'(mysql|postgres|mongodb):\/\/[^\s]+', "severity": "medium"},
+            {"name": "Generic Token", "pattern": r'token\s*=\s*["\']([a-zA-Z0-9_\-]{20,})["\']', "severity": "medium"}
         ]
         
-        # Files to scan
         files_to_scan = []
         for root, dirs, files in os.walk(BASE_DIR):
-            # Skip __pycache__ and .git directories
             dirs[:] = [d for d in dirs if d not in ['__pycache__', '.git', 'node_modules']]
             
             for file in files:
                 if scan_all:
-                    # Scan text files only
                     if file.endswith(('.py', '.js', '.json', '.yaml', '.yml', '.env', '.txt', '.md', '.sh')):
                         files_to_scan.append(os.path.join(root, file))
                 else:
-                    # Only Python files
                     if file.endswith('.py'):
                         files_to_scan.append(os.path.join(root, file))
         
-        # Scan each file
         for file_path in files_to_scan:
             results["files_scanned"] += 1
             
@@ -255,15 +347,11 @@ def scan_secrets(scan_all: bool = True) -> str:
                     content = f.read()
                     lines = content.split('\n')
                 
-                # Check each pattern
                 for pattern_info in secret_patterns:
                     matches = re.finditer(pattern_info["pattern"], content, re.IGNORECASE)
                     
                     for match in matches:
-                        # Find line number
                         line_num = content[:match.start()].count('\n') + 1
-                        
-                        # Get context (the line where secret was found)
                         context_line = lines[line_num - 1].strip()
                         
                         secret = {
@@ -277,9 +365,7 @@ def scan_secrets(scan_all: bool = True) -> str:
                         
                         results["secrets_found"].append(secret)
                         results["summary"][pattern_info["severity"]] += 1
-            
-            except Exception as e:
-                # Skip files that can't be read
+            except:
                 continue
         
         return json.dumps(results, indent=2)
@@ -319,25 +405,40 @@ def greet_user(name: str) -> str:
         return f"Error creating greeting: {str(e)}"
 
 
-# System Tools
+# Enhanced Command Execution (Expanded Whitelist)
 @mcp.tool()
 def run_command(command: str) -> str:
     """
     Execute a shell command and return the output.
-    WARNING: Only safe, whitelisted commands are allowed.
+    Expanded command whitelist for more flexibility.
     """
     ALLOWED_COMMANDS = [
-        'gt', 'git', 'ls', 'pwd', 'echo', 'cat', 'grep', 
-        'find', 'wc', 'head', 'tail', 'python', 'pip'
+        # Version control
+        'gt', 'git',
+        # File operations
+        'ls', 'pwd', 'cat', 'grep', 'find', 'wc', 'head', 'tail',
+        # Text processing
+        'echo', 'sort', 'uniq',
+        # Python
+        'python', 'python3', 'pip', 'pip3',
+        # Package managers
+        'npm', 'yarn',
+        # Build tools
+        'make',
+        # Applications
+        'streamlit', 'superclaude', 'claude',
+        # Network (read-only)
+        'curl', 'wget'
     ]
     
     try:
         base_command = command.strip().split()[0] if command.strip() else ""
         
-        if not any(base_command.startswith(allowed) for allowed in ALLOWED_COMMANDS):
+        if not any(base_command == allowed or base_command.startswith(allowed) for allowed in ALLOWED_COMMANDS):
             return f"Security Error: Command '{base_command}' is not allowed. Allowed commands: {', '.join(ALLOWED_COMMANDS)}"
         
-        BLOCKED_PATTERNS = ['rm -rf', '> /dev/', 'sudo', 'chmod', 'chown', '&&', '||', ';', '|']
+        # Relaxed blocked patterns (only critical ones)
+        BLOCKED_PATTERNS = ['rm -rf /', '> /dev/', 'sudo']
         if any(pattern in command.lower() for pattern in BLOCKED_PATTERNS):
             return f"Security Error: Command contains blocked pattern"
         
@@ -360,7 +461,7 @@ def run_command(command: str) -> str:
 @mcp.tool()
 def check_status() -> str:
     """Check if the server is running."""
-    return "Server is running perfectly! 🚀"
+    return "Server is running perfectly! 🚀 SuperPowered Mode Active!"
 
 
 # 3. 서버 실행 (터미널에서 이 파일을 실행하면 작동 시작)
