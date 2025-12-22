@@ -1,0 +1,27 @@
+# Docker Compose for MCP AI Agent
+version: '3.8'
+
+services:
+  mcp-server:
+    build: .
+    container_name: mcp-ai-agent
+    ports:
+      - "8501:8501"
+    environment:
+      - BASE_DIR=/data
+      - PROJECT_DIR=/app
+      - LOG_LEVEL=INFO
+      - LOG_FILE=/app/logs/mcp_server.log
+      - MAX_FILE_SIZE_MB=10
+      - MAX_CONTENT_SIZE_MB=5
+      - RATE_LIMIT_CALLS_PER_MINUTE=100
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
